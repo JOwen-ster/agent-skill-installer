@@ -36,4 +36,6 @@
 * TypeScript
   * TypeSafe JavaScript
 * SQLITE
-  * Store history
+  * Lightweight database
+
+> v1.0.0
