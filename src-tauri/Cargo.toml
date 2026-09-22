@@ -1,0 +1,54 @@
+[package]
+name = "agent-skill-installer"
+version = "0.1.0"
+description = "Install skills into your agents home directory"
+authors = ["you"]
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "agent_skill_installer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+
+# HTTP client for GitHub API
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# SQLite
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Cross-platform home directory
+dirs = "5"
+
+# Recursive directory walk
+walkdir = "2"
+
+# YAML frontmatter parsing (simple)
+# We'll parse YAML manually with serde_yaml for SKILL.md validation
+serde_yaml = "0.9"
+
+# Error derive macro
+thiserror = "1"
+tauri-plugin-dialog = "2"
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
