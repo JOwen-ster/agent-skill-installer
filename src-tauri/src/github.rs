@@ -18,13 +18,17 @@ pub struct GitHubRef {
 /// Accepts:
 ///   https://github.com/owner/repo
 ///   https://github.com/owner/repo/tree/branch
+///   github.com/owner/repo
 ///   owner/repo
 ///   owner/repo@branch
 pub fn parse_github_url(url: &str) -> Result<GitHubRef, String> {
     let url = url.trim();
 
-    // Full URL
-    if url.starts_with("https://github.com/") || url.starts_with("http://github.com/") {
+    // GitHub URL, with or without a protocol.
+    if url.starts_with("https://github.com/")
+        || url.starts_with("http://github.com/")
+        || url.starts_with("github.com/")
+    {
         let path = url
             .trim_start_matches("https://")
             .trim_start_matches("http://")
@@ -372,7 +376,36 @@ fn build_client() -> Result<reqwest::blocking::Client, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_github_install_name;
+    use super::{parse_github_url, resolve_github_install_name};
+
+    #[test]
+    fn github_urls_accept_optional_protocols() {
+        for prefix in ["https://", "http://", ""] {
+            let parsed = parse_github_url(&format!(" {}github.com/owner/repo.git/ ", prefix)).unwrap();
+            assert_eq!(parsed.owner, "owner");
+            assert_eq!(parsed.repo, "repo");
+            assert_eq!(parsed.branch, None);
+
+            let parsed = parse_github_url(&format!("{}github.com/owner/repo/tree/main/skills/pdf", prefix)).unwrap();
+            assert_eq!(parsed.owner, "owner");
+            assert_eq!(parsed.repo, "repo");
+            assert_eq!(parsed.branch.as_deref(), Some("main"));
+        }
+    }
+
+    #[test]
+    fn github_shorthand_still_accepts_optional_branches() {
+        let parsed = parse_github_url("owner/repo").unwrap();
+        assert_eq!(parsed.owner, "owner");
+        assert_eq!(parsed.repo, "repo");
+        assert_eq!(parsed.branch, None);
+
+        let parsed = parse_github_url("owner/repo@feature/pdf").unwrap();
+        assert_eq!(parsed.owner, "owner");
+        assert_eq!(parsed.repo, "repo");
+        assert_eq!(parsed.branch.as_deref(), Some("feature/pdf"));
+        assert!(parse_github_url("owner").is_err());
+    }
 
     #[test]
     fn github_name_collisions_use_owner_prefix_without_overwriting() {

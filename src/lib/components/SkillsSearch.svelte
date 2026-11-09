@@ -250,6 +250,15 @@
     border-color: var(--accent, #4a9eff);
   }
 
+  .search-input::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+    width: 1em;
+    height: 1em;
+    cursor: pointer;
+    background-color: var(--accent, #4a9eff);
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 3l10 10M13 3L3 13' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  }
+
   .search-btn,
   .submit-queue {
     padding: 0.6rem 1rem;

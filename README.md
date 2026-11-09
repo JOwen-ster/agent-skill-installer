@@ -12,6 +12,7 @@
 
 ## Features
 
+* Single-instance desktop app: launching it again restores and focuses the existing window.
 * Toggleable between `ChatGPT Codex` and `Claude Code`
   * Features are `seperated per agent/harness`
 * `Search` published skills

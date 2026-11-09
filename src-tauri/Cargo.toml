@@ -45,6 +45,9 @@ serde_yaml = "0.9"
 thiserror = "1"
 tauri-plugin-dialog = "2"
 
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "~2.5"
+
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
 codegen-units = 1
