@@ -8,6 +8,7 @@
     SkillsSearchItem,
   } from '$lib/types';
   import { installGithubSkills, searchGithub } from '$lib/api';
+  import { findInstalledGithubSkill } from '$lib/installed';
   import { session } from '$lib/stores.svelte';
   import CollapsibleSection from './CollapsibleSection.svelte';
   import SkillSelect from './SkillSelect.svelte';
@@ -112,7 +113,12 @@
     if (!panel.result) return [];
 
     return panel.selected
-      .filter((candidate) => resultFor(panel, candidate) === null)
+      .filter((candidate) => resultFor(panel, candidate) === null
+        && !findInstalledGithubSkill(
+          session.installedSkills,
+          `https://github.com/${panel.result!.owner}/${panel.result!.repo}`,
+          candidate.name
+        ))
       .map((candidate) => ({
         owner: panel.result!.owner,
         repo: panel.result!.repo,
@@ -211,7 +217,7 @@
         </button>
         <button class="bulk-btn" onclick={installAll} disabled={bulkInstalling || panels.some((panel) => panel.installing) || selectableCount === 0}>
           {#if bulkInstalling}
-            Installing…
+            <span class="spinner" aria-hidden="true"></span> Installing
           {:else}
             Install all selected ({selectableCount})
           {/if}
@@ -219,7 +225,7 @@
       {/snippet}
 
     {#if bulkInstalling}
-      <p role="status">Installing… {bulkProgress}</p>
+      <p role="status"><span class="spinner" aria-hidden="true"></span> Installing {bulkProgress}</p>
     {/if}
     {#if bulkError}
       <p class="panel-message error" role="alert">{bulkError}</p>
@@ -234,7 +240,9 @@
               <span class="install-count">{panel.item.installs.toLocaleString()} installs</span>
             </div>
             <div class="panel-heading-actions">
-              <input class="github-url" value={panel.item.github_url} readonly aria-label="GitHub root URL" />
+              <a class="github-url" href={panel.item.github_url} target="_blank" rel="noreferrer">
+                {panel.item.github_url}
+              </a>
               <button
                 class="clear-btn"
                 type="button"
@@ -256,10 +264,11 @@
               <p class="panel-message error" role="alert">{panel.error}</p>
             {/if}
             {#if panel.installing && !bulkInstalling}
-              <p role="status">Installing… {panel.progress}</p>
+              <p role="status"><span class="spinner" aria-hidden="true"></span> Installing {panel.progress}</p>
             {/if}
             <SkillSelect
               result={panel.result}
+              installedSkills={session.installedSkills}
               preselectedNames={panel.preselectedNames}
               installResults={panel.installResults}
               installing={panel.installing || bulkInstalling}
@@ -272,7 +281,7 @@
               disabled={panel.installing || bulkInstalling || requestsFor(panel).length === 0}
             >
               {#if panel.installing}
-                Installing…
+                <span class="spinner" aria-hidden="true"></span> Installing
               {:else}
                 Install selected ({requestsFor(panel).length})
               {/if}
@@ -286,6 +295,26 @@
 {/if}
 
 <style>
+  .spinner {
+    display: inline-block;
+    width: 0.8em;
+    height: 0.8em;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    vertical-align: -0.1em;
+    margin-inline-end: 0.3em;
+    animation: spin 0.7s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; }
+  }
+
   .bulk-install {
     margin-top: 1rem;
   }

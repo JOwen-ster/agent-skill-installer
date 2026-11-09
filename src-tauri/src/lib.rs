@@ -5,10 +5,13 @@ mod skills_sh;
 mod validate;
 
 use db::{InstallRecord, SearchRecord};
-use fs_ops::{list_installed_skills, resolve_db_path, InstalledSkill};
-use github::{install_github_candidate, search_github_repo, InstallGithubRequest, InstallGithubResult, SearchResult};
-use skills_sh::SkillsSearchItem;
+use fs_ops::{InstalledSkill, list_installed_skills, resolve_db_path};
+use github::{
+    InstallGithubRequest, InstallGithubResult, SearchResult, install_github_candidate,
+    search_github_repo,
+};
 use serde::{Deserialize, Serialize};
+use skills_sh::SkillsSearchItem;
 
 // Installers choose destination names before writing; keep those writes serialized.
 static INSTALL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -220,7 +223,7 @@ fn get_installed_skills(agent: String) -> Result<Vec<InstalledSkill>, String> {
     let mut skills = list_installed_skills(&agent)?;
 
     if let Ok(conn) = open_db() {
-        if let Ok(sources) = db::get_install_sources(&conn) {
+        if let Ok(sources) = db::get_install_sources(&conn, &agent) {
             for skill in &mut skills {
                 if let Some(repo) = sources.get(&skill.name) {
                     skill.source_repo = Some(repo.clone());
@@ -259,7 +262,8 @@ use tauri_plugin_opener::OpenerExt;
 #[tauri::command]
 fn open_skills_dir(app: tauri::AppHandle, agent: String) -> Result<(), String> {
     let dir = fs_ops::resolve_skills_dir(&agent)?;
-    app.opener().open_path(dir.to_string_lossy().to_string(), None::<&str>)
+    app.opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<&str>)
         .map_err(|e| format!("Failed to open folder: {}", e))
 }
 
@@ -275,7 +279,19 @@ fn delete_skill(agent: String, skill_name: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Register first so duplicate launches exit before other plugins initialize.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        use tauri::Manager;
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }));
+
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![

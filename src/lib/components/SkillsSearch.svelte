@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { searchSkills } from '$lib/api';
+  import { getInstalledSkills, searchSkills } from '$lib/api';
+  import { findInstalledGithubSkill } from '$lib/installed';
+  import { session } from '$lib/stores.svelte';
   import type { SkillsSearchItem } from '$lib/types';
   import BulkQueueInstall from './BulkQueueInstall.svelte';
   import CollapsibleSection from './CollapsibleSection.svelte';
@@ -19,8 +21,13 @@
   let queue = $state<SkillsSearchItem[]>([]);
   let submittedQueue = $state<SkillsSearchItem[]>([]);
   let queueInstalling = $state(false);
+  let checkingInstalled = $state(false);
 
-  let queueCount = $derived(queue.length);
+  let queueCount = $derived(queue.filter((item) => !installedFor(item)).length);
+
+  function installedFor(item: SkillsSearchItem) {
+    return findInstalledGithubSkill(session.installedSkills, item.github_url, item.skill_slug);
+  }
 
   function queueKey(item: SkillsSearchItem): string {
     return `${item.github_url}#${item.skill_slug}`;
@@ -39,7 +46,10 @@
     results = [];
 
     try {
-      results = await searchSkills(trimmed);
+      const agent = session.activeAgent;
+      const [found, installed] = await Promise.all([searchSkills(trimmed), getInstalledSkills(agent)]);
+      if (session.activeAgent === agent) session.setInstalledSkills(installed);
+      results = found;
       status = 'done';
     } catch (e) {
       status = 'error';
@@ -52,6 +62,7 @@
     if (isQueued(item)) {
       queue = queue.filter((queued) => queueKey(queued) !== key);
     } else {
+      if (installedFor(item)) return;
       queue = [...queue, item];
     }
   }
@@ -61,9 +72,21 @@
     queue = queue.filter((queued) => queueKey(queued) !== key);
   }
 
-  function submitQueue() {
-    if (queue.length === 0 || queueInstalling) return;
-    submittedQueue = [...queue];
+  async function submitQueue() {
+    if (queue.length === 0 || queueInstalling || checkingInstalled) return;
+    checkingInstalled = true;
+    try {
+      const agent = session.activeAgent;
+      const installed = await getInstalledSkills(agent);
+      if (agent !== session.activeAgent) return;
+      session.setInstalledSkills(installed);
+      submittedQueue = queue.filter((item) => !installedFor(item));
+    } catch (e) {
+      error = String(e);
+      status = 'error';
+    } finally {
+      checkingInstalled = false;
+    }
   }
 </script>
 
@@ -102,13 +125,16 @@
       <ul class="search-results">
         {#each results as item (queueKey(item))}
           {@const queued = isQueued(item)}
+          {@const installed = installedFor(item)}
           <li class:queued>
             <button
               class="result-button"
-              class:selected={queued}
+              class:selected={queued && !installed}
+              class:installed={installed !== undefined}
               type="button"
               onclick={() => toggleQueue(item)}
-              aria-pressed={queued}
+              aria-pressed={queued && !installed}
+              disabled={installed !== undefined}
             >
               <span class="result-main">
                 <strong>{item.skill_name}</strong>
@@ -116,7 +142,7 @@
               </span>
               <span class="result-meta">
                 <span>{item.installs.toLocaleString()} installs</span>
-                <span>{queued ? '✓ queued' : '＋ queue'}</span>
+                <span>{installed ? '✓ Already installed' : queued ? '✓ queued' : '＋ queue'}</span>
               </span>
             </button>
           </li>
@@ -144,6 +170,7 @@
               <div>
                 <strong>{item.skill_name}</strong>
                 <span>{item.github_url}</span>
+                {#if installedFor(item)}<span>✓ Already installed</span>{/if}
               </div>
               <button class="remove-btn" type="button" onclick={() => removeFromQueue(item)} aria-label={`Remove ${item.skill_name}`}>
                 Remove
@@ -151,8 +178,8 @@
             </li>
           {/each}
         </ul>
-        <button class="submit-queue" type="button" onclick={submitQueue} disabled={queueInstalling}>
-          {#if submittedQueue.length > 0}Refresh install panels{:else}Submit queue{/if} ({queueCount})
+        <button class="submit-queue" type="button" onclick={submitQueue} disabled={queueInstalling || checkingInstalled || queueCount === 0}>
+          {#if checkingInstalled}Checking installed skills…{:else if submittedQueue.length > 0}Refresh install panels{:else}Submit queue{/if} ({queueCount})
         </button>
       {/if}
 
@@ -223,6 +250,15 @@
     border-color: var(--accent, #4a9eff);
   }
 
+  .search-input::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+    width: 1em;
+    height: 1em;
+    cursor: pointer;
+    background-color: var(--accent, #4a9eff);
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 3l10 10M13 3L3 13' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  }
+
   .search-btn,
   .submit-queue {
     padding: 0.6rem 1rem;
@@ -269,10 +305,15 @@
     cursor: pointer;
   }
 
-  .result-button:hover,
+  .result-button:hover:not(:disabled),
   .result-button.selected {
     border-color: var(--accent, #4a9eff);
     background: var(--hover-bg, rgba(0, 0, 0, 0.025));
+  }
+
+  .result-button.installed {
+    border-color: var(--success, #22c55e);
+    cursor: default;
   }
 
   .result-main,

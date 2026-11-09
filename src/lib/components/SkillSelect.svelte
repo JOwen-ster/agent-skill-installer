@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { InstallGithubResult, SearchResult, SkillCandidate } from '$lib/types';
+  import type { InstalledSkill, InstallGithubResult, SearchResult, SkillCandidate } from '$lib/types';
+  import { findInstalledGithubSkill } from '$lib/installed';
 
   interface Props {
     result: SearchResult;
     preselectedNames?: string[];
     installResults?: (InstallGithubResult | null)[];
+    installedSkills?: InstalledSkill[];
     installing?: boolean;
     onselectionchange?: (candidates: SkillCandidate[]) => void;
   }
@@ -14,6 +16,7 @@
     result,
     preselectedNames = [],
     installResults = [],
+    installedSkills = [],
     installing = false,
     onselectionchange = () => {},
   }: Props = $props();
@@ -45,9 +48,9 @@
 
   function initializeChecked(): boolean[] {
     if (preselectedNames.length === 0) {
-      return result.candidates.map(() => true);
+      return result.candidates.map(isAvailable);
     }
-    return result.candidates.map(matchesPreselection);
+    return result.candidates.map((candidate) => isAvailable(candidate) && matchesPreselection(candidate));
   }
 
   $effect(() => {
@@ -73,9 +76,9 @@
     // update. This is important for queued panels because their keyed DOM
     // nodes can be reused while the selection state is replaced.
     const states = checked;
-    result.candidates.forEach((_, index) => {
+    result.candidates.forEach((candidate, index) => {
       const input = candidateInputs[index];
-      if (input) input.checked = states[index] ?? false;
+      if (input) input.checked = (states[index] ?? false) && isAvailable(candidate);
     });
 
     if (selectAllInput) {
@@ -88,8 +91,9 @@
     emitSelection();
   });
 
-  let selectedCount = $derived(checked.filter(Boolean).length);
-  let allChecked = $derived(result.candidates.length > 0 && selectedCount === result.candidates.length);
+  let availableCount = $derived(result.candidates.filter(isAvailable).length);
+  let selectedCount = $derived(result.candidates.filter((candidate, index) => checked[index] && isAvailable(candidate)).length);
+  let allChecked = $derived(availableCount > 0 && selectedCount === availableCount);
   let someChecked = $derived(selectedCount > 0 && !allChecked);
   let hasPreselection = $derived(preselectedNames.length > 0);
   let matchedPreselection = $derived(
@@ -97,16 +101,17 @@
   );
 
   function emitSelection() {
-    onselectionchange(result.candidates.filter((_, index) => checked[index]));
+    onselectionchange(result.candidates.filter((candidate, index) => checked[index] && isAvailable(candidate)));
   }
 
   function toggleAll(event: Event) {
     const newState = (event.currentTarget as HTMLInputElement).checked;
-    checked = result.candidates.map(() => newState);
+    checked = result.candidates.map((candidate) => newState && isAvailable(candidate));
     emitSelection();
   }
 
   function toggleCandidate(index: number, event: Event) {
+    if (!isAvailable(result.candidates[index])) return;
     const nextChecked = checked.slice();
     nextChecked[index] = (event.currentTarget as HTMLInputElement).checked;
     checked = nextChecked;
@@ -115,6 +120,18 @@
 
   function getResult(candidate: SkillCandidate): InstallGithubResult | null {
     return installResults.find((item) => item?.candidate_name === candidate.name) ?? null;
+  }
+
+  function getInstalled(candidate: SkillCandidate) {
+    return findInstalledGithubSkill(
+      installedSkills,
+      `https://github.com/${result.owner}/${result.repo}`,
+      candidate.name
+    );
+  }
+
+  function isAvailable(candidate: SkillCandidate): boolean {
+    return getResult(candidate) === null && getInstalled(candidate) === undefined;
   }
 </script>
 
@@ -132,7 +149,7 @@
         checked={allChecked}
         indeterminate={someChecked}
         onchange={(event) => toggleAll(event)}
-        disabled={installing}
+        disabled={installing || availableCount === 0}
       />
       Select all
     </label>
@@ -147,14 +164,15 @@
   <ul class="candidates">
     {#each result.candidates as candidate, i}
       {@const res = getResult(candidate)}
-      <li class="candidate" class:installed={res?.success} class:failed={res && !res.success}>
+      {@const installed = getInstalled(candidate)}
+      <li class="candidate" class:installed={res?.success || installed !== undefined} class:failed={res && !res.success}>
         <label class="candidate-label">
           <input
             bind:this={candidateInputs[i]}
             type="checkbox"
-            checked={checked[i] ?? false}
+            checked={(checked[i] ?? false) && isAvailable(candidate)}
             onchange={(event) => toggleCandidate(i, event)}
-            disabled={installing || res !== null}
+            disabled={installing || !isAvailable(candidate)}
           />
           <span class="name">{candidate.name}</span>
           <span class="file-count">({candidate.files.length} file{candidate.files.length !== 1 ? 's' : ''})</span>
@@ -172,6 +190,8 @@
           {:else}
             <span class="status error">✗ {res.error}</span>
           {/if}
+        {:else if installed}
+          <span class="status ok">✓ Already installed as <code>{installed.name}</code></span>
         {/if}
       </li>
     {/each}

@@ -12,6 +12,8 @@
 
 ## Features
 
+* Single-instance desktop app: launching it again restores and focuses the existing window.
+* Windows setup EXE: selecting "Delete the application data" during uninstall also removes the current user's home-directory history database and its SQLite sidecar files. Upgrades preserve this data.
 * Toggleable between `ChatGPT Codex` and `Claude Code`
   * Features are `seperated per agent/harness`
 * `Search` published skills
