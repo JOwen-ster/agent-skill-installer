@@ -171,12 +171,12 @@ pub fn get_installs(conn: &Connection) -> SqlResult<Vec<InstallRecord>> {
 }
 
 /// Fetch a mapping from skill_name to the source repo for successfully installed skills.
-pub fn get_install_sources(conn: &Connection) -> SqlResult<std::collections::HashMap<String, String>> {
+pub fn get_install_sources(conn: &Connection, agent: &str) -> SqlResult<std::collections::HashMap<String, String>> {
     let mut stmt = conn.prepare(
-        "SELECT skill_name, source_ref FROM installs WHERE status = 'ok' AND source_type = 'github' ORDER BY id ASC",
+        "SELECT skill_name, source_ref FROM installs WHERE status = 'ok' AND source_type = 'github' AND agent = ?1 ORDER BY id ASC",
     )?;
     let mut map = std::collections::HashMap::new();
-    let rows = stmt.query_map([], |row| {
+    let rows = stmt.query_map([agent], |row| {
         let name: String = row.get(0)?;
         let ref_opt: Option<String> = row.get(1)?;
         Ok((name, ref_opt))
@@ -244,4 +244,23 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
 
 fn is_leap(year: u64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn install_sources_keep_agents_separate() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_tables(&conn).unwrap();
+        for (agent, source) in [
+            ("codex", "https://github.com/openai/skills/tree/main/skills/pdf"),
+            ("claude", "https://github.com/anthropics/skills/tree/main/skills/pdf"),
+        ] {
+            record_install_ok(&conn, agent, "pdf", "github", Some(source), "unused", 1).unwrap();
+        }
+        assert_eq!(get_install_sources(&conn, "codex").unwrap()["pdf"], "openai/skills");
+        assert_eq!(get_install_sources(&conn, "claude").unwrap()["pdf"], "anthropics/skills");
+    }
 }

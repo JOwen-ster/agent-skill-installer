@@ -220,7 +220,7 @@ fn get_installed_skills(agent: String) -> Result<Vec<InstalledSkill>, String> {
     let mut skills = list_installed_skills(&agent)?;
 
     if let Ok(conn) = open_db() {
-        if let Ok(sources) = db::get_install_sources(&conn) {
+        if let Ok(sources) = db::get_install_sources(&conn, &agent) {
             for skill in &mut skills {
                 if let Some(repo) = sources.get(&skill.name) {
                     skill.source_repo = Some(repo.clone());

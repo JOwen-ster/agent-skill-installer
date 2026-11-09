@@ -26,6 +26,8 @@ class SessionState {
   }
 
   setActiveAgent(agent: 'codex' | 'claude') {
+    if (this.activeAgent === agent) return;
+    this.installedSkills = [];
     this.activeAgent = agent;
   }
 }
