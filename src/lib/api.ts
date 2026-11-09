@@ -21,9 +21,20 @@ export async function searchSkills(query: string): Promise<SkillsSearchItem[]> {
 
 export async function installGithubSkills(
   requests: InstallGithubRequest[],
-  agent: string
+  agent: string,
+  onprogress?: (result: InstallGithubResult, index: number) => void
 ): Promise<InstallGithubResult[]> {
-  return invoke<InstallGithubResult[]>('install_github_skills', { requests, agent });
+  const results: InstallGithubResult[] = [];
+  for (const [index, request] of requests.entries()) {
+    const [result] = await invoke<InstallGithubResult[]>('install_github_skills', {
+      requests: [request],
+      agent,
+    });
+    if (!result) throw new Error('Installer returned no result.');
+    results.push(result);
+    onprogress?.(result, index);
+  }
+  return results;
 }
 
 export async function installDroppedPaths(

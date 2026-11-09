@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type {
     InstallGithubRequest,
     InstallGithubResult,
@@ -14,9 +15,10 @@
   interface Props {
     skills: SkillsSearchItem[];
     oninstalled: () => void;
+    busy?: boolean;
   }
 
-  let { skills, oninstalled }: Props = $props();
+  let { skills, oninstalled, busy = $bindable(false) }: Props = $props();
 
   type PanelStatus = 'searching' | 'done' | 'error';
 
@@ -30,10 +32,17 @@
     selected: SkillCandidate[];
     installResults: (InstallGithubResult | null)[];
     installing: boolean;
+    progress: string;
   }
 
   let panels = $state<Panel[]>([]);
   let bulkInstalling = $state(false);
+  let bulkProgress = $state('');
+  let bulkError = $state<string | null>(null);
+
+  $effect(() => {
+    busy = bulkInstalling || panels.some((panel) => panel.installing);
+  });
 
   function panelKey(item: SkillsSearchItem): string {
     return `${item.github_url}#${item.skill_slug}`;
@@ -50,6 +59,7 @@
       selected: [],
       installResults: [],
       installing: false,
+      progress: '',
     };
   }
 
@@ -57,7 +67,8 @@
     const nextPanels = skills.map(makePanel);
     panels = nextPanels;
     for (const panel of nextPanels) {
-      void loadPanel(panel.key, panel.item.github_url);
+      // Changing the agent must not reset panels during an active install.
+      void untrack(() => loadPanel(panel.key, panel.item.github_url));
     }
   });
 
@@ -127,21 +138,25 @@
     const requests = requestsFor(panel);
     if (requests.length === 0) return;
 
-    updatePanel(key, { installing: true });
+    updatePanel(key, { installing: true, progress: `0 of ${requests.length} complete`, error: null });
     try {
-      const results = await installGithubSkills(requests, session.activeAgent);
-      const current = panels.find((item) => item.key === key);
-      if (current) updatePanel(key, { installResults: mergeResults(current, results) });
-      oninstalled();
+      await installGithubSkills(requests, session.activeAgent, (result, index) => {
+        const current = panels.find((item) => item.key === key);
+        if (current) updatePanel(key, {
+          installResults: mergeResults(current, [result]),
+          progress: `${index + 1} of ${requests.length} complete`,
+        });
+      });
     } catch (e) {
-      console.error('Queue install error:', e);
+      updatePanel(key, { error: String(e) });
     } finally {
       updatePanel(key, { installing: false });
+      oninstalled();
     }
   }
 
   async function installAll() {
-    if (bulkInstalling) return;
+    if (bulkInstalling || panels.some((panel) => panel.installing)) return;
 
     const jobs = panels.flatMap((panel) =>
       requestsFor(panel).map((request) => ({ panelKey: panel.key, request }))
@@ -149,41 +164,37 @@
     if (jobs.length === 0) return;
 
     bulkInstalling = true;
-    panels = panels.map((panel) => ({ ...panel, installing: true }));
+    bulkProgress = `0 of ${jobs.length} complete`;
+    bulkError = null;
+    panels = panels.map((panel) => ({ ...panel, installing: true, error: null }));
 
     try {
-      const results = await installGithubSkills(
+      await installGithubSkills(
         jobs.map((job) => job.request),
-        session.activeAgent
+        session.activeAgent,
+        (result, index) => {
+          bulkProgress = `${index + 1} of ${jobs.length} complete`;
+          const key = jobs[index].panelKey;
+          const panel = panels.find((item) => item.key === key);
+          if (panel) updatePanel(key, { installResults: mergeResults(panel, [result]) });
+        }
       );
-
-      const byPanel = new Map<string, InstallGithubResult[]>();
-      results.forEach((result, index) => {
-        const panelKey = jobs[index]?.panelKey;
-        if (!panelKey) return;
-        const panelResults = byPanel.get(panelKey) ?? [];
-        panelResults.push(result);
-        byPanel.set(panelKey, panelResults);
-      });
-
-      for (const [key, panelResults] of byPanel) {
-        const panel = panels.find((item) => item.key === key);
-        if (panel) updatePanel(key, { installResults: mergeResults(panel, panelResults) });
-      }
-      oninstalled();
     } catch (e) {
-      console.error('Bulk queue install error:', e);
+      bulkError = String(e);
     } finally {
       panels = panels.map((panel) => ({ ...panel, installing: false }));
       bulkInstalling = false;
+      oninstalled();
     }
   }
 
   function clearPanel(key: string) {
+    if (bulkInstalling || panels.find((panel) => panel.key === key)?.installing) return;
     panels = panels.filter((panel) => panel.key !== key);
   }
 
   function clearAllPanels() {
+    if (bulkInstalling || panels.some((panel) => panel.installing)) return;
     panels = [];
   }
 </script>
@@ -195,10 +206,10 @@
       description="Review the GitHub candidates before installing."
     >
       {#snippet actions()}
-        <button class="clear-btn" type="button" onclick={clearAllPanels}>
+        <button class="clear-btn" type="button" onclick={clearAllPanels} disabled={bulkInstalling || panels.some((panel) => panel.installing)}>
           Clear all panels
         </button>
-        <button class="bulk-btn" onclick={installAll} disabled={bulkInstalling || selectableCount === 0}>
+        <button class="bulk-btn" onclick={installAll} disabled={bulkInstalling || panels.some((panel) => panel.installing) || selectableCount === 0}>
           {#if bulkInstalling}
             Installing…
           {:else}
@@ -206,6 +217,13 @@
           {/if}
         </button>
       {/snippet}
+
+    {#if bulkInstalling}
+      <p role="status">Installing… {bulkProgress}</p>
+    {/if}
+    {#if bulkError}
+      <p class="panel-message error" role="alert">{bulkError}</p>
+    {/if}
 
     <div class="panels">
       {#each panels as panel (panel.key)}
@@ -221,6 +239,7 @@
                 class="clear-btn"
                 type="button"
                 onclick={() => clearPanel(panel.key)}
+                disabled={panel.installing || bulkInstalling}
                 aria-label={`Clear ${panel.item.skill_name} install panel`}
               >
                 Clear
@@ -233,6 +252,12 @@
           {:else if panel.status === 'error'}
             <p class="panel-message error">⚠ {panel.error}</p>
           {:else if panel.result}
+            {#if panel.error}
+              <p class="panel-message error" role="alert">{panel.error}</p>
+            {/if}
+            {#if panel.installing && !bulkInstalling}
+              <p role="status">Installing… {panel.progress}</p>
+            {/if}
             <SkillSelect
               result={panel.result}
               preselectedNames={panel.preselectedNames}
