@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::fs_ops::{resolve_skills_dir, resolve_unique_name};
+use crate::fs_ops::resolve_skills_dir;
 use crate::validate::validate_skill_md;
 
 /// Parsed representation of a GitHub URL.
@@ -263,7 +263,7 @@ pub fn install_github_candidate(req: &InstallGithubRequest, agent: &str) -> Resu
 
     let skills_dir = resolve_skills_dir(agent)?;
     let original_name = req.candidate.name.clone();
-    let final_name = resolve_unique_name(&skills_dir, &original_name);
+    let final_name = resolve_github_install_name(&skills_dir, &original_name, &req.owner)?;
 
     // Download all files into a temp directory
     let temp_dir = skills_dir.join(format!(".tmp-github-{}", final_name));
@@ -320,6 +320,23 @@ pub fn install_github_candidate(req: &InstallGithubRequest, agent: &str) -> Resu
     })
 }
 
+fn resolve_github_install_name(
+    skills_dir: &std::path::Path,
+    desired_name: &str,
+    owner: &str,
+) -> Result<String, String> {
+    let name = desired_name.replace(' ', "-");
+    let name = if skills_dir.join(&name).exists() {
+        format!("{}-{}", owner, name)
+    } else {
+        name
+    };
+    if skills_dir.join(&name).exists() {
+        return Err(format!("Skill folder '{}' already exists. No files were replaced.", name));
+    }
+    Ok(name)
+}
+
 fn build_raw_url(owner: &str, repo: &str, branch: &str, path: &str) -> String {
     format!(
         "https://raw.githubusercontent.com/{}/{}/{}/{}",
@@ -351,4 +368,31 @@ fn build_client() -> Result<reqwest::blocking::Client, String> {
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_github_install_name;
+
+    #[test]
+    fn github_name_collisions_use_owner_prefix_without_overwriting() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("skill-names-{}-{}", std::process::id(), unique));
+        std::fs::create_dir(&dir).unwrap();
+
+        assert_eq!(resolve_github_install_name(&dir, "pdf", "anthropic").unwrap(), "pdf");
+        assert_eq!(resolve_github_install_name(&dir, "my skill", "anthropic").unwrap(), "my-skill");
+        std::fs::create_dir(dir.join("pdf")).unwrap();
+        assert_eq!(resolve_github_install_name(&dir, "pdf", "anthropic").unwrap(), "anthropic-pdf");
+        assert_eq!(resolve_github_install_name(&dir, "pdf", "openai").unwrap(), "openai-pdf");
+        std::fs::create_dir(dir.join("anthropic-pdf")).unwrap();
+        std::fs::write(dir.join("anthropic-pdf/asset.txt"), "keep me").unwrap();
+        let error = resolve_github_install_name(&dir, "pdf", "anthropic").unwrap_err();
+        assert!(error.contains("anthropic-pdf"));
+        assert_eq!(std::fs::read_to_string(dir.join("anthropic-pdf/asset.txt")).unwrap(), "keep me");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

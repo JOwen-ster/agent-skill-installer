@@ -18,6 +18,7 @@
   let results = $state<SkillsSearchItem[]>([]);
   let queue = $state<SkillsSearchItem[]>([]);
   let submittedQueue = $state<SkillsSearchItem[]>([]);
+  let queueInstalling = $state(false);
 
   let queueCount = $derived(queue.length);
 
@@ -61,7 +62,7 @@
   }
 
   function submitQueue() {
-    if (queue.length === 0) return;
+    if (queue.length === 0 || queueInstalling) return;
     submittedQueue = [...queue];
   }
 </script>
@@ -150,13 +151,13 @@
             </li>
           {/each}
         </ul>
-        <button class="submit-queue" type="button" onclick={submitQueue}>
+        <button class="submit-queue" type="button" onclick={submitQueue} disabled={queueInstalling}>
           {#if submittedQueue.length > 0}Refresh install panels{:else}Submit queue{/if} ({queueCount})
         </button>
       {/if}
 
     {#if submittedQueue.length > 0}
-      <BulkQueueInstall skills={submittedQueue} {oninstalled} />
+      <BulkQueueInstall skills={submittedQueue} {oninstalled} bind:busy={queueInstalling} />
     {/if}
   </div>
 </div>

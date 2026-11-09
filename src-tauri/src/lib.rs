@@ -10,6 +10,9 @@ use github::{install_github_candidate, search_github_repo, InstallGithubRequest,
 use skills_sh::SkillsSearchItem;
 use serde::{Deserialize, Serialize};
 
+// Installers choose destination names before writing; keep those writes serialized.
+static INSTALL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Helper: open DB (returns a string error for Tauri command boundary)
 // ──────────────────────────────────────────────────────────────────────────────
@@ -24,15 +27,26 @@ fn open_db() -> Result<rusqlite::Connection, String> {
 
 /// Search a GitHub repo URL for SKILL.md candidates. Records the search in DB.
 #[tauri::command]
-fn search_github(url: String, agent: String) -> Result<SearchResult, String> {
-    let result = search_github_repo(&url)?;
+async fn search_github(url: String, agent: String) -> Result<SearchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = search_github_repo(&url)?;
 
-    // Record in DB (best-effort — don't fail the search if DB fails)
-    if let Ok(conn) = open_db() {
-        let _ = db::record_search(&conn, &agent, &url, &result.owner, &result.repo, &result.branch);
-    }
+        // Record in DB (best-effort — don't fail the search if DB fails)
+        if let Ok(conn) = open_db() {
+            let _ = db::record_search(
+                &conn,
+                &agent,
+                &url,
+                &result.owner,
+                &result.repo,
+                &result.branch,
+            );
+        }
 
-    Ok(result)
+        Ok(result)
+    })
+    .await
+    .map_err(|e| format!("Search worker failed: {}", e))?
 }
 
 /// Search skills.sh and return the first GitHub-backed catalog results.
@@ -43,55 +57,63 @@ async fn search_skills(query: String) -> Result<Vec<SkillsSearchItem>, String> {
 
 /// Install one or more GitHub candidates in batch.
 #[tauri::command]
-fn install_github_skills(requests: Vec<InstallGithubRequest>, agent: String) -> Vec<InstallGithubResult> {
-    let conn = open_db().ok();
-    let mut results = Vec::new();
+async fn install_github_skills(
+    requests: Vec<InstallGithubRequest>,
+    agent: String,
+) -> Result<Vec<InstallGithubResult>, String> {
+    let _install_guard = INSTALL_LOCK.lock().await;
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_db().ok();
+        let mut results = Vec::new();
 
-    for req in &requests {
-        match install_github_candidate(req, &agent) {
-            Ok(res) => {
-                if let Some(ref conn) = conn {
-                    let source_ref = format!(
-                        "https://github.com/{}/{}/tree/{}/{}",
-                        req.owner, req.repo, req.branch, req.candidate.dir_path
-                    );
-                    let _ = db::record_install_ok(
-                        conn,
-                        &agent,
-                        &res.skill_name,
-                        "github",
-                        Some(&source_ref),
-                        &res.installed_path,
-                        res.files_written,
-                    );
+        for req in &requests {
+            match install_github_candidate(req, &agent) {
+                Ok(res) => {
+                    if let Some(ref conn) = conn {
+                        let source_ref = format!(
+                            "https://github.com/{}/{}/tree/{}/{}",
+                            req.owner, req.repo, req.branch, req.candidate.dir_path
+                        );
+                        let _ = db::record_install_ok(
+                            conn,
+                            &agent,
+                            &res.skill_name,
+                            "github",
+                            Some(&source_ref),
+                            &res.installed_path,
+                            res.files_written,
+                        );
+                    }
+                    results.push(res);
                 }
-                results.push(res);
-            }
-            Err(e) => {
-                if let Some(ref conn) = conn {
-                    let _ = db::record_install_error(
-                        conn,
-                        &agent,
-                        &req.candidate.name,
-                        "github",
-                        None,
-                        &e,
-                    );
+                Err(e) => {
+                    if let Some(ref conn) = conn {
+                        let _ = db::record_install_error(
+                            conn,
+                            &agent,
+                            &req.candidate.name,
+                            "github",
+                            None,
+                            &e,
+                        );
+                    }
+                    results.push(InstallGithubResult {
+                        candidate_name: req.candidate.name.clone(),
+                        skill_name: req.candidate.name.clone(),
+                        original_name: req.candidate.name.clone(),
+                        installed_path: String::new(),
+                        files_written: 0,
+                        success: false,
+                        error: Some(e),
+                    });
                 }
-                results.push(InstallGithubResult {
-                    candidate_name: req.candidate.name.clone(),
-                    skill_name: req.candidate.name.clone(),
-                    original_name: req.candidate.name.clone(),
-                    installed_path: String::new(),
-                    files_written: 0,
-                    success: false,
-                    error: Some(e),
-                });
             }
         }
-    }
 
-    results
+        results
+    })
+    .await
+    .map_err(|e| format!("Install worker failed: {}", e))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -110,74 +132,86 @@ async fn install_dropped_paths(
     paths: Vec<String>,
     agent: String,
 ) -> Result<Vec<DropInstallResult>, String> {
-    let conn = open_db().ok();
-    let mut results = Vec::new();
+    let _install_guard = INSTALL_LOCK.lock().await;
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_db().ok();
+        let mut results = Vec::new();
 
-    for p in paths {
-        let raw_path = p.clone();
-        let source_path = std::path::Path::new(&p);
+        for p in paths {
+            let raw_path = p.clone();
+            let source_path = std::path::Path::new(&p);
 
-        if !source_path.exists() {
-            results.push(DropInstallResult {
-                path: raw_path.clone(),
-                skill_name: String::new(),
-                original_name: String::new(),
-                installed_path: String::new(),
-                files_written: 0,
-                success: false,
-                error: Some("Dropped item does not exist or is not accessible.".to_string()),
-            });
-            continue;
-        }
-
-        match fs_ops::install_all_from_local_path(source_path, &agent) {
-            Ok(installs) => {
-                for res in installs {
-                    if let Some(ref conn) = conn {
-                        let _ = db::record_install_ok(
-                            conn,
-                            &agent,
-                            &res.skill_name,
-                            "upload",
-                            Some(&raw_path),
-                            &res.installed_path,
-                            res.files_written,
-                        );
-                    }
-                    results.push(DropInstallResult {
-                        path: raw_path.clone(),
-                        skill_name: res.skill_name,
-                        original_name: res.original_name,
-                        installed_path: res.installed_path,
-                        files_written: res.files_written,
-                        success: true,
-                        error: None,
-                    });
-                }
-            }
-            Err(e) => {
-                let name = source_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                if let Some(ref conn) = conn {
-                    let _ = db::record_install_error(conn, &agent, &name, "upload", Some(&raw_path), &e);
-                }
+            if !source_path.exists() {
                 results.push(DropInstallResult {
                     path: raw_path.clone(),
-                    skill_name: name,
+                    skill_name: String::new(),
                     original_name: String::new(),
                     installed_path: String::new(),
                     files_written: 0,
                     success: false,
-                    error: Some(e),
+                    error: Some("Dropped item does not exist or is not accessible.".to_string()),
                 });
+                continue;
+            }
+
+            match fs_ops::install_all_from_local_path(source_path, &agent) {
+                Ok(installs) => {
+                    for res in installs {
+                        if let Some(ref conn) = conn {
+                            let _ = db::record_install_ok(
+                                conn,
+                                &agent,
+                                &res.skill_name,
+                                "upload",
+                                Some(&raw_path),
+                                &res.installed_path,
+                                res.files_written,
+                            );
+                        }
+                        results.push(DropInstallResult {
+                            path: raw_path.clone(),
+                            skill_name: res.skill_name,
+                            original_name: res.original_name,
+                            installed_path: res.installed_path,
+                            files_written: res.files_written,
+                            success: true,
+                            error: None,
+                        });
+                    }
+                }
+                Err(e) => {
+                    let name = source_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if let Some(ref conn) = conn {
+                        let _ = db::record_install_error(
+                            conn,
+                            &agent,
+                            &name,
+                            "upload",
+                            Some(&raw_path),
+                            &e,
+                        );
+                    }
+                    results.push(DropInstallResult {
+                        path: raw_path.clone(),
+                        skill_name: name,
+                        original_name: String::new(),
+                        installed_path: String::new(),
+                        files_written: 0,
+                        success: false,
+                        error: Some(e),
+                    });
+                }
             }
         }
-    }
 
-    Ok(results)
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("Install worker failed: {}", e))?
 }
 
 /// List installed skills by reading the filesystem live, and augmenting with DB metadata.

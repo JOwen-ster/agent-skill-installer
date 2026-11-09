@@ -19,13 +19,18 @@
   let selectedCandidates = $state<SkillCandidate[]>([]);
   let installResults = $state<(InstallGithubResult | null)[]>([]);
   let installing = $state(false);
+  let progress = $state('');
+  let error = $state<string | null>(null);
 
   $effect(() => {
     selectedCandidates = result.candidates;
     installResults = result.candidates.map(() => null);
   });
 
-  let selectedCount = $derived(selectedCandidates.length);
+  let pendingCandidates = $derived(selectedCandidates.filter((candidate) =>
+    !installResults.some((installed) => installed?.candidate_name === candidate.name)
+  ));
+  let selectedCount = $derived(pendingCandidates.length);
   let hasInstallResults = $derived(installResults.some((item) => item !== null));
 
   function handleSelection(candidates: SkillCandidate[]) {
@@ -33,7 +38,7 @@
   }
 
   async function installSelected() {
-    const requests: InstallGithubRequest[] = selectedCandidates.map((candidate) => ({
+    const requests: InstallGithubRequest[] = pendingCandidates.map((candidate) => ({
       owner: result.owner,
       repo: result.repo,
       branch: result.branch,
@@ -43,15 +48,20 @@
     if (requests.length === 0 || installing) return;
 
     installing = true;
+    progress = `0 of ${requests.length} complete`;
+    error = null;
     try {
-      const results = await installGithubSkills(requests, session.activeAgent);
-      const resultMap = new Map(results.map((item) => [item.candidate_name, item]));
-      installResults = result.candidates.map((candidate) => resultMap.get(candidate.name) ?? null);
-      oninstalled();
+      await installGithubSkills(requests, session.activeAgent, (installed, index) => {
+        installResults = result.candidates.map((candidate, i) =>
+          candidate.name === installed.candidate_name ? installed : installResults[i] ?? null
+        );
+        progress = `${index + 1} of ${requests.length} complete`;
+      });
     } catch (e) {
-      console.error('Install error:', e);
+      error = String(e);
     } finally {
       installing = false;
+      oninstalled();
     }
   }
 </script>
@@ -63,7 +73,14 @@
   onselectionchange={handleSelection}
 />
 
-{#if !hasInstallResults}
+{#if installing}
+  <p role="status">Installing… {progress}</p>
+{/if}
+{#if error}
+  <p role="alert">{error}</p>
+{/if}
+
+{#if !hasInstallResults || selectedCount > 0 || installing}
   <button
     class="install-btn"
     onclick={installSelected}

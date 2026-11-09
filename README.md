@@ -17,6 +17,7 @@
 * `Search` published skills
 * Paste `GitHub` repository links for smart `SKILL.md` search and install
   * Select which skills to install if many are present 
+  * Name conflicts use the GitHub owner as a prefix, such as `anthropic-pdf`. If that folder also exists, the install reports a conflict.
 * `Drag and drop` and `file picker` support for:
   * `Folders`
   * Individual `SKILL.md` files
