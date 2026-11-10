@@ -167,11 +167,10 @@
         checked={selectedSkills.has(skill.name)} 
         onchange={(e) => toggleSkill(skill.name, e.currentTarget.checked)}
       />
-      <span class="skill-name">{skill.name}</span>
+      <span class="skill-name" title={skill.path}>{skill.name}</span>
       {#if skill.description}
         <span class="skill-desc">{skill.description}</span>
       {/if}
-      <span class="skill-path" title={skill.path}>{displayPath(skill.path)}</span>
     </div>
     <button class="delete-btn" title="Delete skill" onclick={() => promptDelete(skill)}>
       <svg style="width:1.6em; height:1.6em; display:block;" viewBox="-2.5 0 61 61" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path fill-rule="evenodd" d="M36 26v10.997c0 1.659-1.337 3.003-3.009 3.003h-9.981c-1.662 0-3.009-1.342-3.009-3.003v-10.997h16zm-2 0v10.998c0 .554-.456 1.002-1.002 1.002h-9.995c-.554 0-1.002-.456-1.002-1.002v-10.998h12zm-9-5c0-.552.451-1 .991-1h4.018c.547 0 .991.444.991 1 0 .552-.451 1-.991 1h-4.018c-.547 0-.991-.444-.991-1zm0 6.997c0-.551.444-.997 1-.997.552 0 1 .453 1 .997v6.006c0 .551-.444.997-1 .997-.552 0-1-.453-1-.997v-6.006zm4 0c0-.551.444-.997 1-.997.552 0 1 .453 1 .997v6.006c0 .551-.444.997-1 .997-.552 0-1-.453-1-.997v-6.006zm-6-5.997h-4.008c-.536 0-.992.448-.992 1 0 .556.444 1 .992 1h18.016c.536 0 .992-.448.992-1 0-.556-.444-1-.992-1h-4.008v-1c0-1.653-1.343-3-3-3h-3.999c-1.652 0-3 1.343-3 3v1z"></path></svg>
@@ -349,7 +348,7 @@
 
   .skill-info {
     display: grid;
-    grid-template-columns: auto minmax(120px, auto) 1fr auto;
+    grid-template-columns: auto minmax(120px, auto) 1fr;
     gap: 0.5rem;
     align-items: center;
     flex-grow: 1;
@@ -401,16 +400,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .skill-path {
-    font-size: 0.75rem;
-    color: var(--text-secondary, #aaa);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    font-family: "Cascadia Code", "JetBrains Mono", monospace;
-    justify-self: end;
   }
 
   .skills-dir-hint {

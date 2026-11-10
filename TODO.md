@@ -1,8 +1,6 @@
 # Todo
 
-search history should not be updated via installs, every SUCCESSFUL search click should update search HISTORY
+could add a max background thread for installing skill repos
+could add a max concurrent downloads per background thread so fetching many folders and files is sped up
 
-ui freezes when installing from queue
-
-when multiple skills have the same name, auto rename it, for example searching pdf both anthropic and openai have one, only the open ai one gets installed.
-you have to manually press install for it to trigger this workflow, instead of the installed selected accounting for this by prepending the repo name to the front of the skill folder.
+lets say 1 skill has 4 files it needs to download if max concurrency is 2 then 2 get done asynchronously and then the next after those finish.
