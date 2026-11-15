@@ -1,0 +1,139 @@
+name: "publish"
+
+on:
+  push:
+    branches:
+      - release
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "macos-latest"
+            target: "aarch64-apple-darwin"
+            name: "macos-arm64"
+          - platform: "macos-latest"
+            target: "x86_64-apple-darwin"
+            name: "macos-x64"
+          - platform: "ubuntu-24.04"
+            target: ""
+            name: "linux-x64"
+          - platform: "windows-latest"
+            target: ""
+            name: "windows-x64"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: setup bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: install dependencies (ubuntu only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils libfuse2
+
+      - name: install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      # ---------- Windows: standalone exe ----------
+      - name: Build exe (Windows)
+        if: runner.os == 'Windows'
+        run: bun run tauri build --no-bundle
+
+      - name: Collect exe (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p out
+          exe=$(find src-tauri/target -maxdepth 3 -path "*release/*.exe" ! -path "*/deps/*" ! -path "*/build/*" | head -n 1)
+          echo "Found exe: $exe"
+          test -n "$exe"
+          cp "$exe" "out/AgentSkillInstaller-windows-x64.exe"
+
+      # ---------- macOS: zipped .app ----------
+      - name: Build .app (macOS)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+        run: bun run tauri build --target ${{ matrix.target }} --bundles app
+
+      - name: Zip .app (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p out
+          app=$(find src-tauri/target -type d -name "*.app" -path "*bundle/macos/*" | head -n 1)
+          echo "Found app: $app"
+          test -n "$app"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "out/AgentSkillInstaller-${{ matrix.name }}.zip"
+
+      # ---------- Linux: AppImage ----------
+      - name: Build AppImage (Linux)
+        if: runner.os == 'Linux'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: bun run tauri build --bundles appimage
+
+      - name: Collect AppImage (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p out
+          img=$(find src-tauri/target -name "*.AppImage" | head -n 1)
+          echo "Found AppImage: $img"
+          test -n "$img"
+          cp "$img" "out/AgentSkillInstaller-linux-x64.AppImage"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(jq -r '.version // empty' src-tauri/tauri.conf.json)
+          if [ -z "$version" ]; then
+            version=$(jq -r .version package.json)
+          fi
+          tag="v$version"
+          ls -la out
+
+          gh release create "$tag" out/* \
+            --draft \
+            --target "$GITHUB_SHA" \
+            --title "Agent Skill Installer $tag" \
+            --notes "No installers: Windows is a standalone .exe, macOS is a zipped .app (unzip and run), Linux is an AppImage."
