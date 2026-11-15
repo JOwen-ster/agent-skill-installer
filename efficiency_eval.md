@@ -379,6 +379,6 @@ There are no current end-to-end performance tests covering these cases. No imple
 
 **Lean:** Duplicate discovery, per-skill IPC calls, repeated array searches, and repeated schema setup can be removed. No new dependency is required for the core recommendations; a trustworthy net line-count reduction requires an actual implementation and is not estimated here.
 
-**Not checked:** Live GitHub/skills.sh response times or current service quotas, release-build end-to-end timing, browser frame profiling, packet traces, real-user database contents, and OS-specific disk/antivirus effects. Installer/uninstaller lifecycle tests were read for context but not executed. No external network installs or modifications to real skill directories were performed.
+**Not checked:** Live GitHub/skills.sh response times or current service quotas, release-build end-to-end timing, browser frame profiling, packet traces, real-user database contents, and OS-specific disk/antivirus effects. The single-instance lifecycle test was read for context. No external network installs or modifications to real skill directories were performed.
 
 **Risk / uncertainty:** Expected speed gains are inferred from confirmed request counts, loops, lock scope, and isolated operation probes. Their size needs measurement; concurrency and caching must preserve validation, external-change detection, source identity, destination collision safety, and atomic publication.
